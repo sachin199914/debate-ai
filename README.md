@@ -24,7 +24,7 @@ Minimal audio-first debate practice app.
 ## Phase 3 + Voice Output
 
 - `/api/debate` endpoint for an AI debate opponent
-- OpenRouter integration through `OPENROUTER_API_KEY`
+- Groq integration through `GROQ_API_KEY`
 - Demo fallback response when no API key is present
 - Opponent rebuttal appears on screen
 - Browser text-to-speech reads the rebuttal aloud
@@ -54,6 +54,6 @@ npm install
 npm run dev
 ```
 
-Copy `.env.example` to `.env` and add `OPENROUTER_API_KEY` for live AI responses.
-The default live model is `nex-agi/nex-n2-pro:free`, configurable with `OPENROUTER_MODEL`.
+Copy `.env.example` to `.env` and add `GROQ_API_KEY` for live AI responses.
+The default live model is `qwen/qwen3-32b`, configurable with `GROQ_MODEL`.
 Without a key, the app still runs in demo mode so the UI and voice flow can be tested.
