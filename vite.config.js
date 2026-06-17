@@ -57,16 +57,22 @@ function createDemoResponse(action, topic, argument) {
           {
             feedback: 'Your main claim is understandable, but the reasoning would land harder with a clearer because-chain.',
             name: 'Clarity',
+            rationale:
+              'The claim can be followed, yet the argument needs a more explicit chain from problem to policy to outcome.',
             score: 4,
           },
           {
             feedback: 'You need a specific example, study, or classroom scenario to support the claim.',
             name: 'Evidence',
+            rationale:
+              'The argument relies on a plausible general claim but does not yet include concrete support that would be hard for an opponent to dismiss.',
             score: 3,
           },
           {
             feedback: 'The rebuttal exposed a compromise you did not address, so your next turn should answer it directly.',
             name: 'Debate Strength',
+            rationale:
+              'The position is debatable, but it needs a direct answer to the strongest alternative policy before it is ready for a sharper next round.',
             score: 3,
           },
         ],
@@ -130,9 +136,24 @@ Return only valid JSON with this exact shape:
     },
     "feedback": "2-3 sentence coach feedback diagnosing the user's argument",
     "scores": [
-      { "name": "Clarity", "score": 1, "feedback": "short feedback" },
-      { "name": "Evidence", "score": 1, "feedback": "short feedback" },
-      { "name": "Debate Strength", "score": 1, "feedback": "short feedback" }
+      {
+        "name": "Clarity",
+        "score": 1,
+        "feedback": "short feedback",
+        "rationale": "detailed explanation of why this score was earned"
+      },
+      {
+        "name": "Evidence",
+        "score": 1,
+        "feedback": "short feedback",
+        "rationale": "detailed explanation of why this score was earned"
+      },
+      {
+        "name": "Debate Strength",
+        "score": 1,
+        "feedback": "short feedback",
+        "rationale": "detailed explanation of why this score was earned"
+      }
     ],
     "suggestions": [
       "specific suggestion 1",

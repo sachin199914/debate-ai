@@ -1,4 +1,4 @@
-import { Mic, RotateCcw, Send, Square, Volume2 } from 'lucide-react'
+import { FileText, Mic, RotateCcw, Send, Square, Video, VideoOff, Volume2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
@@ -15,6 +15,78 @@ const coachDimensions = [
     name: 'Debate Strength',
     note: 'Handles objections',
   },
+]
+
+const coachRubrics = {
+  Clarity: {
+    checks: [
+      'The main claim is easy to identify.',
+      'Reasons connect logically to the conclusion.',
+      'The argument avoids confusing leaps or vague wording.',
+    ],
+    description:
+      'Clarity measures whether the listener can quickly understand the position, the reasoning behind it, and the path from claim to conclusion.',
+    levels: [
+      '5: Clear claim, organized reasoning, and precise wording.',
+      '4: Mostly clear with minor gaps or wording that could be sharper.',
+      '3: Understandable main idea, but the reasoning path needs stronger structure.',
+      '2: Some relevant ideas, but the listener must infer the claim or logic.',
+      '1: The position is unclear or difficult to follow.',
+    ],
+  },
+  Evidence: {
+    checks: [
+      'The argument uses examples, facts, studies, or concrete scenarios.',
+      'Evidence directly supports the claim instead of sitting beside it.',
+      'The support is specific enough to resist an opponent’s challenge.',
+    ],
+    description:
+      'Evidence measures how well the argument proves its claim with concrete support rather than relying only on assertion or intuition.',
+    levels: [
+      '5: Specific, relevant, and persuasive evidence is integrated into the reasoning.',
+      '4: Good support is present, but it could be more precise or better connected.',
+      '3: Some support appears, but it is broad, generic, or underdeveloped.',
+      '2: Minimal support; the claim mostly rests on assertion.',
+      '1: Little to no evidence is offered.',
+    ],
+  },
+  'Debate Strength': {
+    checks: [
+      'The argument anticipates likely objections.',
+      'It answers the opponent’s strongest alternative or compromise.',
+      'It gives the speaker a strong next move for the debate.',
+    ],
+    description:
+      'Debate Strength measures how well the argument survives pressure from an opponent and whether it positions the speaker to win the next exchange.',
+    levels: [
+      '5: Strongly handles counterarguments and controls the debate direction.',
+      '4: Handles obvious objections, with one important pressure point remaining.',
+      '3: Has a workable position, but leaves a major rebuttal unanswered.',
+      '2: Vulnerable to predictable objections or alternative policies.',
+      '1: The opponent can easily redirect or defeat the argument.',
+    ],
+  },
+}
+
+const fillerTerms = [
+  'um',
+  'uh',
+  'er',
+  'ah',
+  'like',
+  'you know',
+  'i mean',
+  'basically',
+  'actually',
+  'literally',
+  'well',
+  'so',
+  'right',
+  'okay',
+  'kind of',
+  'sort of',
+  'you see',
+  'i think i think'
 ]
 
 const defaultStatus = 'Use the microphone to capture your argument, then review the transcript.'
@@ -34,6 +106,14 @@ function getSpeechSynthesis() {
   }
 
   return window.speechSynthesis || null
+}
+
+function getCameraSupported() {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+
+  return Boolean(navigator.mediaDevices?.getUserMedia)
 }
 
 function createEmptyCoachScores() {
@@ -81,6 +161,7 @@ function normalizeCoachScores(scores = []) {
     return {
       ...dimension,
       feedback: match?.feedback || '',
+      rationale: match?.rationale || '',
       score: Number.isFinite(numericScore) ? Math.min(5, Math.max(1, numericScore)) : null,
     }
   })
@@ -128,6 +209,415 @@ function getOverallCoachScore(coachScores) {
   return Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function getScoreLabel(score) {
+  if (score >= 5) {
+    return 'Excellent'
+  }
+
+  if (score >= 4) {
+    return 'Strong'
+  }
+
+  if (score >= 3) {
+    return 'Developing'
+  }
+
+  if (score >= 2) {
+    return 'Needs work'
+  }
+
+  return 'Missing or unclear'
+}
+
+function buildFallbackRationale(dimension, score) {
+  const label = getScoreLabel(score || 0).toLowerCase()
+  const rubric = coachRubrics[dimension.name]
+
+  return `This score is ${label} because the response was evaluated against this rubric area: ${rubric.description} Use the checklist below to see what must improve for a higher score.`
+}
+
+function shortenForSummary(value, fallback) {
+  const cleanText = String(value || '').trim().replace(/\s+/g, ' ')
+
+  if (!cleanText) {
+    return fallback
+  }
+
+  return cleanText.length > 170 ? `${cleanText.slice(0, 167).trim()}...` : cleanText
+}
+
+function buildDebateSummary(topic, transcript, opponentReply) {
+  return [
+    `The debate focused on ${shortenForSummary(topic, 'the selected topic')}.`,
+    `The speaker argued that ${shortenForSummary(transcript, 'their position needs more detail before the next round')}.`,
+    `The opponent challenged the argument by emphasizing ${shortenForSummary(opponentReply, 'the strongest unresolved counterpoint')}.`,
+  ]
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function countFillerWords(transcript) {
+  const cleanTranscript = String(transcript || '').toLowerCase()
+
+  const breakdown = fillerTerms
+    .map((term) => {
+      const escapedTerm = term.split(/\s+/).map(escapeRegExp).join('\\s+')
+      const pattern = new RegExp(`\\b${escapedTerm}\\b`, 'g')
+      const count = cleanTranscript.match(pattern)?.length || 0
+
+      return {
+        count,
+        term,
+      }
+    })
+    .filter((item) => item.count > 0)
+
+  return {
+    breakdown,
+    total: breakdown.reduce((sum, item) => sum + item.count, 0),
+  }
+}
+
+function buildReportHtml({
+  coachDecision,
+  coachFeedback,
+  coachScores,
+  coachSuggestions,
+  opponentReply,
+  overallCoachScore,
+  overallTip,
+  topic,
+  transcript,
+}) {
+  const reportDate = new Date().toLocaleString()
+  const escapedTopic = escapeHtml(topic || 'Open debate topic')
+  const escapedDecision = escapeHtml(coachDecision.label || 'Awaiting decision')
+  const escapedSummary = escapeHtml(coachDecision.summary || 'No decision summary available.')
+  const escapedNextMove = escapeHtml(coachDecision.nextMove || 'No next move provided.')
+  const escapedFeedback = escapeHtml(coachFeedback || 'No coach feedback available.')
+  const escapedTip = escapeHtml(overallTip || 'No overall tip available.')
+  const debateSummary = buildDebateSummary(topic, transcript, opponentReply)
+    .map((sentence) => `<p>${escapeHtml(sentence)}</p>`)
+    .join('')
+  const fillerReport = countFillerWords(transcript)
+  const fillerBreakdown = fillerReport.breakdown.length
+    ? fillerReport.breakdown
+      .map((item) => `<li>${escapeHtml(item.term)}: ${escapeHtml(item.count)}</li>`)
+      .join('')
+    : '<li>No tracked filler words were detected.</li>'
+
+  const scoreSections = coachScores
+    .map((dimension) => {
+      const rubric = coachRubrics[dimension.name]
+      const score = dimension.score || 0
+      const rationale = dimension.rationale || buildFallbackRationale(dimension, score)
+      const checklist = rubric.checks.map((item) => `<li>${escapeHtml(item)}</li>`).join('')
+      const levels = rubric.levels.map((item) => `<li>${escapeHtml(item)}</li>`).join('')
+
+      return `
+        <section class="score-section">
+          <div class="score-heading">
+            <div>
+              <p class="section-kicker">${escapeHtml(dimension.name)}</p>
+              <h2>${escapeHtml(getScoreLabel(score))}</h2>
+            </div>
+            <strong>${score || '-'}/5</strong>
+          </div>
+          <p class="rubric-description">${escapeHtml(rubric.description)}</p>
+          <h3>Why This Score</h3>
+          <p>${escapeHtml(rationale)}</p>
+          <h3>Coach Feedback</h3>
+          <p>${escapeHtml(dimension.feedback || 'No dimension feedback available.')}</p>
+          <div class="rubric-grid">
+            <div>
+              <h3>Rubric Checklist</h3>
+              <ul>${checklist}</ul>
+            </div>
+            <div>
+              <h3>Score Guide</h3>
+              <ul>${levels}</ul>
+            </div>
+          </div>
+        </section>
+      `
+    })
+    .join('')
+
+  const suggestions = coachSuggestions.length
+    ? coachSuggestions.map((suggestion) => `<li>${escapeHtml(suggestion)}</li>`).join('')
+    : '<li>No specific suggestions were returned.</li>'
+
+  return `<!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Debate Coach Report</title>
+        <style>
+          :root {
+            color: #111827;
+            background: #eef2f7;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            color: #111827;
+            background: #eef2f7;
+          }
+
+          .page {
+            width: min(980px, calc(100% - 32px));
+            margin: 24px auto;
+            padding: 40px;
+            border: 1px solid #d7dce2;
+            border-radius: 8px;
+            background: #ffffff;
+            box-shadow: 0 20px 70px rgba(15, 23, 42, 0.12);
+          }
+
+          .toolbar {
+            width: min(980px, calc(100% - 32px));
+            margin: 20px auto 0;
+            display: flex;
+            justify-content: flex-end;
+          }
+
+          button {
+            min-height: 42px;
+            padding: 0 16px;
+            border: 0;
+            border-radius: 8px;
+            background: #0f766e;
+            color: #ffffff;
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+          }
+
+          header {
+            display: grid;
+            gap: 16px;
+            padding-bottom: 24px;
+            border-bottom: 2px solid #14313b;
+          }
+
+          .eyebrow,
+          .section-kicker {
+            margin: 0;
+            color: #0f766e;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+          }
+
+          h1 {
+            margin: 0;
+            color: #111827;
+            font-size: 34px;
+            line-height: 1;
+          }
+
+          h2 {
+            margin: 4px 0 0;
+            color: #111827;
+            font-size: 22px;
+            line-height: 1.1;
+          }
+
+          h3 {
+            margin: 18px 0 6px;
+            color: #14313b;
+            font-size: 14px;
+            text-transform: uppercase;
+          }
+
+          p,
+          li {
+            color: #334155;
+            font-size: 14px;
+            line-height: 1.55;
+          }
+
+          ul {
+            margin: 0;
+            padding-left: 19px;
+          }
+
+          .meta-grid,
+          .rubric-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+          }
+
+          .summary-card,
+          .text-card,
+          .score-section {
+            margin-top: 18px;
+            padding: 18px;
+            border: 1px solid #d7dce2;
+            border-radius: 8px;
+            background: #fbfcfe;
+          }
+
+          .summary-card {
+            background: #ecfdf5;
+            border-color: rgba(15, 118, 110, 0.22);
+          }
+
+          .summary-card strong {
+            color: #111827;
+            font-size: 28px;
+          }
+
+          .metric-card {
+            margin-top: 18px;
+            padding: 18px;
+            border: 1px solid rgba(20, 49, 59, 0.18);
+            border-radius: 8px;
+            background: #f8fafc;
+          }
+
+          .metric-card strong {
+            display: inline-grid;
+            width: 58px;
+            height: 44px;
+            margin-right: 10px;
+            place-items: center;
+            border-radius: 8px;
+            background: #14313b;
+            color: #ffffff;
+            font-size: 20px;
+          }
+
+          .score-heading {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            align-items: flex-start;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #d7dce2;
+          }
+
+          .score-heading strong {
+            width: 68px;
+            min-height: 52px;
+            border-radius: 8px;
+            display: grid;
+            place-items: center;
+            background: #14313b;
+            color: #ffffff;
+            font-size: 18px;
+          }
+
+          .rubric-description {
+            padding: 12px;
+            border-radius: 8px;
+            background: #f1f5f9;
+          }
+
+          .excerpt {
+            white-space: pre-wrap;
+          }
+
+          @media print {
+            body {
+              background: #ffffff;
+            }
+
+            .toolbar {
+              display: none;
+            }
+
+            .page {
+              width: 100%;
+              margin: 0;
+              padding: 0;
+              border: 0;
+              box-shadow: none;
+            }
+
+            .score-section {
+              break-inside: avoid;
+            }
+          }
+
+          @media (max-width: 720px) {
+            .page {
+              padding: 24px;
+            }
+
+            .meta-grid,
+            .rubric-grid {
+              grid-template-columns: 1fr;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="toolbar">
+          <button type="button" onclick="window.print()">Save as PDF</button>
+        </div>
+        <main class="page">
+          <header>
+            <p class="eyebrow">Debate Practice Coach Report</p>
+            <h1>${escapedTopic}</h1>
+            <div class="meta-grid">
+              <p><strong>Generated:</strong> ${escapeHtml(reportDate)}</p>
+              <p><strong>Overall Score:</strong> ${escapeHtml(overallCoachScore || '-')}/5</p>
+            </div>
+          </header>
+
+          <section class="summary-card">
+            <p class="section-kicker">Coach Verdict</p>
+            <h2>${escapedDecision}</h2>
+            <p>${escapedSummary}</p>
+            <p><strong>Next move:</strong> ${escapedNextMove}</p>
+            <p><strong>Overall tip:</strong> ${escapedTip}</p>
+          </section>
+
+          <section class="text-card">
+            <p class="section-kicker">Coach Diagnosis</p>
+            <p>${escapedFeedback}</p>
+            <h3>Recommended Improvements</h3>
+            <ul>${suggestions}</ul>
+          </section>
+
+          <section class="metric-card">
+            <p class="section-kicker">Delivery Metric</p>
+            <h2><strong>${escapeHtml(fillerReport.total)}</strong> Filler Words Detected</h2>
+            <p>This count is calculated from the transcript for reporting only; the transcript text is not edited or cleaned.</p>
+            <h3>Tracked Filler Breakdown</h3>
+            <ul>${fillerBreakdown}</ul>
+          </section>
+
+          ${scoreSections}
+
+          <section class="text-card">
+            <p class="section-kicker">Debate Summary</p>
+            ${debateSummary}
+          </section>
+        </main>
+      </body>
+    </html>`
+}
+
 function App() {
   const [topic, setTopic] = useState('Should schools ban smartphones during class?')
   const [transcript, setTranscript] = useState('')
@@ -150,12 +640,17 @@ function App() {
   const [speakingTarget, setSpeakingTarget] = useState('')
   const [speechError, setSpeechError] = useState('')
   const [autoSpeak, setAutoSpeak] = useState(true)
+  const [isCameraOn, setIsCameraOn] = useState(false)
+  const [cameraError, setCameraError] = useState('')
   const recognitionRef = useRef(null)
   const utteranceRef = useRef(null)
+  const videoRef = useRef(null)
+  const cameraStreamRef = useRef(null)
 
   const hasTranscript = transcript.trim().length > 0
   const recognitionSupported = Boolean(getSpeechRecognition())
   const speechSupported = Boolean(getSpeechSynthesis())
+  const cameraSupported = getCameraSupported()
   const canStartRecording = recognitionSupported && !isRecording
   const coachSpeechText = buildCoachSpeech(
     coachScores,
@@ -187,8 +682,49 @@ function App() {
       }
 
       getSpeechSynthesis()?.cancel()
+      stopCamera()
     }
   }, [])
+
+  function stopCamera() {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop())
+    cameraStreamRef.current = null
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+
+    setIsCameraOn(false)
+  }
+
+  async function startCamera() {
+    if (!cameraSupported) {
+      setCameraError('Camera preview is not supported in this browser.')
+      return
+    }
+
+    setCameraError('')
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: 'user',
+        },
+      })
+
+      cameraStreamRef.current = stream
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+      }
+
+      setIsCameraOn(true)
+    } catch {
+      setCameraError('Camera permission was blocked or no camera was found.')
+      stopCamera()
+    }
+  }
 
   function cancelSpeech() {
     getSpeechSynthesis()?.cancel()
@@ -384,7 +920,7 @@ function App() {
   async function getCoachFeedback() {
     setIsCoaching(true)
     setDebateError('')
-    
+
     try {
       const response = await fetch('/api/debate', {
         method: 'POST',
@@ -423,6 +959,37 @@ function App() {
     }
   }
 
+  function openCoachReport() {
+    if (!overallCoachScore) {
+      setDebateError('Get coach feedback before creating a PDF report.')
+      return
+    }
+
+    const reportWindow = window.open('', '_blank')
+
+    if (!reportWindow) {
+      setDebateError('Pop-up blocked. Allow pop-ups to open the coach PDF report.')
+      return
+    }
+
+    const reportHtml = buildReportHtml({
+      coachDecision,
+      coachFeedback,
+      coachScores,
+      coachSuggestions,
+      opponentReply,
+      overallCoachScore,
+      overallTip,
+      topic,
+      transcript,
+    })
+
+    reportWindow.document.open()
+    reportWindow.document.write(reportHtml)
+    reportWindow.document.close()
+    reportWindow.focus()
+  }
+
   function resetDraft() {
     if (recognitionRef.current) {
       recognitionRef.current.abort()
@@ -430,6 +997,7 @@ function App() {
     }
 
     cancelSpeech()
+    stopCamera()
     setTopic('')
     setTranscript('')
     setInterimTranscript('')
@@ -478,6 +1046,39 @@ function App() {
               placeholder="Enter a debate topic"
             />
           </label>
+
+          <div className="camera-preview" aria-label="Camera preview">
+            <div className={isCameraOn ? 'camera-frame active' : 'camera-frame'}>
+              <video ref={videoRef} autoPlay muted playsInline />
+              {!isCameraOn ? (
+                <div className="camera-placeholder">
+                  <VideoOff aria-hidden="true" size={28} />
+                  <span>Camera preview is off.</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="camera-controls">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!cameraSupported || isCameraOn}
+                onClick={startCamera}
+              >
+                <Video aria-hidden="true" size={18} />
+                Start Camera
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!isCameraOn}
+                onClick={stopCamera}
+              >
+                <VideoOff aria-hidden="true" size={18} />
+                Stop Camera
+              </button>
+            </div>
+            {cameraError ? <p className="audio-error">{cameraError}</p> : null}
+          </div>
 
           <div className="recording-controls" aria-label="Recording controls">
             <button
@@ -605,8 +1206,8 @@ function App() {
               <p>{coachStatus}</p>
             </div>
 
-            {opponentReply && !overallCoachScore && (
-              <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+            {opponentReply && !overallCoachScore ? (
+              <div className="coach-actions">
                 <button
                   className="primary-button"
                   type="button"
@@ -616,7 +1217,7 @@ function App() {
                   {isCoaching ? 'Coach is analyzing...' : 'Get Coach Feedback'}
                 </button>
               </div>
-            )}
+            ) : null}
 
             <div className={coachDecision.label ? 'coach-decision ready' : 'coach-decision'}>
               <span>Decision</span>
@@ -658,8 +1259,12 @@ function App() {
 
             {overallTip ? <p className="overall-tip">{overallTip}</p> : null}
 
-            {overallCoachScore && (
-              <div style={{ marginTop: '2rem', textAlign: 'center' }}>
+            {overallCoachScore ? (
+              <div className="report-actions">
+                <button className="secondary-button" type="button" onClick={openCoachReport}>
+                  <FileText aria-hidden="true" size={18} />
+                  Open PDF Report
+                </button>
                 <button
                   className="primary-button"
                   type="button"
@@ -668,7 +1273,7 @@ function App() {
                   Start New Debate
                 </button>
               </div>
-            )}
+            ) : null}
           </article>
 
           {debateError ? <p className="panel-message error">{debateError}</p> : null}
